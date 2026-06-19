@@ -37,7 +37,13 @@ MESSAGES_TOPIC_ARN = os.environ["MESSAGES_TOPIC_ARN"]
 AGENTCORE_RUNTIME_VERSION = os.environ["AGENTCORE_RUNTIME_VERSION"]
 
 # AWS clients
-agentcore_client = boto3.client('bedrock-agentcore', region_name=AWS_REGION)
+from botocore.config import Config as BotoConfig
+agentcore_client = boto3.client(
+    'bedrock-agentcore',
+    region_name=AWS_REGION,
+    endpoint_url=f"https://bedrock-agentcore.{AWS_REGION}.amazonaws.com",
+    config=BotoConfig(read_timeout=900, connect_timeout=10),
+)
 sns_client = boto3.client('sns', region_name=AWS_REGION)
 
 # Sequence tracking for token streaming
