@@ -2,7 +2,6 @@ import aws_cdk as cdk
 from aws_cdk import (
     Stack, RemovalPolicy, Duration,
     aws_s3 as s3,
-    aws_bedrock as bedrock,
     aws_lambda as lambda_,
     aws_apigateway as apigw,
     aws_iam as iam,
@@ -28,79 +27,24 @@ class DocumentsWorkflowStack(Stack):
         # ── S3: Documents bucket ─────────────────────────────────────────────
         documents_bucket = s3.Bucket(
             self, "DocumentsBucket",
-            bucket_name=f"ofid-upload-documents-{self.account}",
             versioned=True,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             encryption=s3.BucketEncryption.S3_MANAGED,
             removal_policy=RemovalPolicy.RETAIN,
         )
 
-        # ── S3: Vectors bucket ───────────────────────────────────────────────
-        vectors_bucket = s3.Bucket(
+        # ── S3: Vectors bucket (used by Bedrock Knowledge Base) ──────────────
+        s3.Bucket(
             self, "VectorsBucket",
-            bucket_name=f"ofid-vectors-{self.account}",
             versioned=False,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             encryption=s3.BucketEncryption.S3_MANAGED,
             removal_policy=RemovalPolicy.RETAIN,
         )
 
-        # ── IAM Role for Bedrock Knowledge Base ─────────────────────────────
-        kb_role = iam.Role(
-            self, "KnowledgeBaseRole",
-            role_name="ofid-knowledge-base-role",
-            assumed_by=iam.ServicePrincipal("bedrock.amazonaws.com"),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3ReadOnlyAccess"),
-            ],
-        )
-        kb_role.add_to_policy(iam.PolicyStatement(
-            actions=["bedrock:InvokeModel"],
-            resources=["*"],
-        ))
-        vectors_bucket.grant_read_write(kb_role)
-
-        # ── Bedrock Knowledge Base ───────────────────────────────────────────
-        knowledge_base = bedrock.CfnKnowledgeBase(
-            self, "KnowledgeBase",
-            name="ofid-knowledge-base",
-            role_arn=kb_role.role_arn,
-            knowledge_base_configuration=bedrock.CfnKnowledgeBase.KnowledgeBaseConfigurationProperty(
-                type="VECTOR",
-                vector_knowledge_base_configuration=bedrock.CfnKnowledgeBase.VectorKnowledgeBaseConfigurationProperty(
-                    embedding_model_arn=f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-embed-text-v2:0",
-                    embedding_model_configuration=bedrock.CfnKnowledgeBase.EmbeddingModelConfigurationProperty(
-                        bedrock_embedding_model_configuration=bedrock.CfnKnowledgeBase.BedrockEmbeddingModelConfigurationProperty(
-                            dimensions=1024,
-                        )
-                    ),
-                ),
-            ),
-            storage_configuration=bedrock.CfnKnowledgeBase.StorageConfigurationProperty(
-                type="S3_VECTORS",
-                s3_vectors_configuration=bedrock.CfnKnowledgeBase.S3VectorsConfigurationProperty(
-                    bucket_arn=vectors_bucket.bucket_arn,
-                ),
-            ),
-        )
-
-        # ── Bedrock Data Source ──────────────────────────────────────────────
-        bedrock.CfnDataSource(
-            self, "DocumentsDataSource",
-            name="ofid-documents-datasource",
-            knowledge_base_id=knowledge_base.attr_knowledge_base_id,
-            data_source_configuration=bedrock.CfnDataSource.DataSourceConfigurationProperty(
-                type="S3",
-                s3_configuration=bedrock.CfnDataSource.S3DataSourceConfigurationProperty(
-                    bucket_arn=documents_bucket.bucket_arn,
-                ),
-            ),
-            vector_ingestion_configuration=bedrock.CfnDataSource.VectorIngestionConfigurationProperty(
-                chunking_configuration=bedrock.CfnDataSource.ChunkingConfigurationProperty(
-                    chunking_strategy="DEFAULT",
-                )
-            ),
-        )
+        # NOTE: Bedrock Knowledge Base with S3 Vectors "Quick create" is only
+        # available via the AWS Console. Create the KB manually following
+        # guide 03-documents-workflow-rag.md after deploying this stack.
 
         # ── Lambda: prompt-handler ───────────────────────────────────────────
         powertools_layer = lambda_.LayerVersion.from_layer_version_arn(
@@ -173,6 +117,5 @@ class DocumentsWorkflowStack(Stack):
         )
 
         # ── Outputs ───────────────────────────────────────────────────────────
-        cdk.CfnOutput(self, "KnowledgeBaseId", value=knowledge_base.attr_knowledge_base_id, export_name="ofid-kb-id")
         cdk.CfnOutput(self, "DocumentsBucketName", value=documents_bucket.bucket_name, export_name="ofid-documents-bucket")
         cdk.CfnOutput(self, "DocumentsApiEndpoint", value=api.url, export_name="ofid-documents-api-url")
