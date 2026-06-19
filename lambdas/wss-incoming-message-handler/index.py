@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from datetime import datetime
 import boto3
 from aws_lambda_powertools import Logger
@@ -29,9 +30,14 @@ def handle_request(conn_id, action, model_interface, data, user_id, agentcoreRun
         "userId": user_id,
         "data": data,
     }
+    # FIFO topic: order per session, dedupe on a unique id so repeated
+    # identical messages are not silently dropped.
+    group_id = data.get("sessionId") or conn_id
     response = sns.publish(
         TopicArn=os.environ["MESSAGES_TOPIC_ARN"],
         Message=json.dumps(message),
+        MessageGroupId=group_id,
+        MessageDeduplicationId=str(uuid.uuid4()),
     )
     return {"statusCode": 200, "body": json.dumps(response)}
 

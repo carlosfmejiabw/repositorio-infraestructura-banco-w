@@ -35,6 +35,9 @@ AGENTCORE_MEMORY_ID = os.environ.get("AGENTCORE_MEMORY_ID")
 AGENTCORE_GATEWAY_ID = os.environ.get("AGENTCORE_GATEWAY_ID")
 MESSAGES_TOPIC_ARN = os.environ["MESSAGES_TOPIC_ARN"]
 AGENTCORE_RUNTIME_VERSION = os.environ["AGENTCORE_RUNTIME_VERSION"]
+# ARN of the AgentCore runtime to invoke. Primary source is this env var
+# (wired by the CDK stack); the per-message field is kept only as a fallback.
+AGENTCORE_RUNTIME_ARN = os.environ.get("AGENTCORE_RUNTIME_ARN")
 
 # AWS clients
 from botocore.config import Config as BotoConfig
@@ -52,9 +55,13 @@ sequence_number = 0
 
 def send_whatsapp_response(details):
     """Send response to WhatsApp via SNS"""
+    # FIFO topic: order per session, unique dedup id to avoid dropping repeats.
+    group_id = details.get("data", {}).get("sessionId") or details.get("phone_id") or "default"
     sns_client.publish(
         TopicArn=MESSAGES_TOPIC_ARN,
         Message=json.dumps(details),
+        MessageGroupId=group_id,
+        MessageDeduplicationId=str(uuid.uuid4()),
     )
 
 
@@ -326,11 +333,11 @@ def handle_run(record):
     logger.info(f"Record keys: {list(record.keys())}")
     logger.info(f"Data keys: {list(data.keys())}")
     
-    agentcore_runtime_arn = record.get("agentcoreRuntimeArn") or data.get("agentcoreRuntimeArn")
+    agentcore_runtime_arn = AGENTCORE_RUNTIME_ARN or record.get("agentcoreRuntimeArn") or data.get("agentcoreRuntimeArn")
     logger.info(f"Using AgentCore Runtime ARN: {agentcore_runtime_arn}")
-    
+
     if not agentcore_runtime_arn:
-        raise ValueError("agentcoreRuntimeArn is required in the event (either in record or data)")
+        raise ValueError("AGENTCORE_RUNTIME_ARN env var is not set and no agentcoreRuntimeArn was provided in the event")
 
     # Extract parameters
     provider = data.get("provider", "bedrock")
@@ -399,11 +406,11 @@ def handle_whatsapp_run(record):
     source = record["source"]
     data = record["data"]
     
-    agentcore_runtime_arn = record.get("agentcoreRuntimeArn") or data.get("agentcoreRuntimeArn")
+    agentcore_runtime_arn = AGENTCORE_RUNTIME_ARN or record.get("agentcoreRuntimeArn") or data.get("agentcoreRuntimeArn")
     logger.info(f"Using AgentCore Runtime ARN: {agentcore_runtime_arn}")
-    
+
     if not agentcore_runtime_arn:
-        raise ValueError("agentcoreRuntimeArn is required in the event (either in record or data)")
+        raise ValueError("AGENTCORE_RUNTIME_ARN env var is not set and no agentcoreRuntimeArn was provided in the event")
 
     # Extract parameters
     provider = data.get("provider", "bedrock")

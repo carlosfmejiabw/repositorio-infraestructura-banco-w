@@ -19,7 +19,7 @@ POWERTOOLS_LAYER_ARN = (
 
 
 class ChatbotWorkflowStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, **kwargs):
+    def __init__(self, scope: Construct, construct_id: str, agentcore_runtime_arn: str = None, **kwargs):
         super().__init__(scope, construct_id, **kwargs)
 
         # ── DynamoDB Tables ─────────────────────────────────────────────────
@@ -56,18 +56,32 @@ class ChatbotWorkflowStack(Stack):
             partition_key=dynamodb.Attribute(name="UserId", type=dynamodb.AttributeType.STRING),
         )
 
-        # ── SNS Topic ────────────────────────────────────────────────────────
-        self.message_topic = sns.Topic(self, "MessageTopic", topic_name="ofid-message-topic")
+        # ── SNS Topic (FIFO) ─────────────────────────────────────────────────
+        # FIFO so SNS can fan out to FIFO SQS queues preserving per-session order.
+        # Deduplication is explicit (MessageDeduplicationId per publish), NOT
+        # content-based, so legitimately repeated bodies/tokens are not dropped.
+        self.message_topic = sns.Topic(
+            self, "MessageTopic",
+            topic_name="ofid-message-topic.fifo",
+            fifo=True,
+            content_based_deduplication=False,
+        )
 
-        # ── SQS Queues ───────────────────────────────────────────────────────
+        # ── SQS Queues (FIFO) ────────────────────────────────────────────────
+        # FIFO queues grouped by sessionId guarantee in-order delivery per session.
+        # A FIFO queue requires a FIFO dead-letter queue. Deduplication is driven by
+        # the MessageDeduplicationId that SNS forwards from each publish.
         dlq_outgoing = sqs.Queue(
             self, "DlqOutgoing",
-            queue_name="ofid-dlq-outgoing-message",
+            queue_name="ofid-dlq-outgoing-message.fifo",
+            fifo=True,
             encryption=sqs.QueueEncryption.SQS_MANAGED,
         )
         self.queue_outgoing = sqs.Queue(
             self, "QueueOutgoing",
-            queue_name="ofid-queue-outgoing-message",
+            queue_name="ofid-queue-outgoing-message.fifo",
+            fifo=True,
+            content_based_deduplication=False,
             visibility_timeout=Duration.minutes(1),
             retention_period=Duration.days(4),
             encryption=sqs.QueueEncryption.SQS_MANAGED,
@@ -76,12 +90,15 @@ class ChatbotWorkflowStack(Stack):
 
         dlq_langchain = sqs.Queue(
             self, "DlqLangchain",
-            queue_name="ofid-dlq-langchain-ingestion",
+            queue_name="ofid-dlq-langchain-ingestion.fifo",
+            fifo=True,
             encryption=sqs.QueueEncryption.SQS_MANAGED,
         )
         self.queue_langchain = sqs.Queue(
             self, "QueueLangchain",
-            queue_name="ofid-queue-langchain-ingestion",
+            queue_name="ofid-queue-langchain-ingestion.fifo",
+            fifo=True,
+            content_based_deduplication=False,
             visibility_timeout=Duration.minutes(90),
             retention_period=Duration.days(4),
             encryption=sqs.QueueEncryption.SQS_MANAGED,
@@ -189,7 +206,7 @@ class ChatbotWorkflowStack(Stack):
             timeout=Duration.minutes(15),
             layers=[powertools_layer],
             environment={
-                "AGENTCORE_RUNTIME_ARN": "",
+                "AGENTCORE_RUNTIME_ARN": agentcore_runtime_arn or "",
                 "AGENTCORE_RUNTIME_VERSION": "DEFAULT",
                 "LOG_LEVEL": "INFO",
                 "MESSAGES_TOPIC_ARN": self.message_topic.topic_arn,
