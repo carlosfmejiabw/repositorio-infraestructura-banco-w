@@ -190,7 +190,7 @@ class ChatbotWorkflowStack(Stack):
             layers=[powertools_layer],
             environment={
                 "AGENTCORE_RUNTIME_ARN": "",
-                "AGENTCORE_RUNTIME_VERSION": "DRAFT",
+                "AGENTCORE_RUNTIME_VERSION": "DEFAULT",
                 "LOG_LEVEL": "INFO",
                 "MESSAGES_TOPIC_ARN": self.message_topic.topic_arn,
                 "POWERTOOLS_DEV": "true",
@@ -207,7 +207,7 @@ class ChatbotWorkflowStack(Stack):
         self.queue_langchain.grant_consume_messages(request_handler)
         request_handler.add_to_role_policy(iam.PolicyStatement(
             actions=[
-                "bedrock:*", "secretsmanager:*", "ssm:*",
+                "bedrock:*", "bedrock-agentcore:*", "secretsmanager:*", "ssm:*",
                 "s3:*", "execute-api:ManageConnections",
             ],
             resources=["*"],
